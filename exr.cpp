@@ -10,6 +10,8 @@
 #include <memory>
 #include <algorithm>
 #include <optional>
+#include <stdexcept> // for std::runtime_error
+
 
 // Disable threading since we don't use it
 // drastically improves weak pointer times...
@@ -288,9 +290,49 @@ ASGraph readASGraph(const std::string& filename) {
 
 class BGPSimplePolicy : public Policy {
 public:
-    BGPSimplePolicy() : Policy() {}
+    BGPSimplePolicy() : Policy() {
+        initialize_gao_rexford_functions();
+    }
+
+    void process_incoming_anns(Relationships from_rel, int propagation_round, bool reset_q = true) {
+        // Process all announcements that were incoming from a specific relationship
+
+        // For each prefix, get all announcements received
+        for (const auto& [prefix, ann_list] : recvQueue.prefix_anns()) {
+            // Get announcement currently in local RIB
+            auto current_ann = localRIB.get_ann(prefix);
+
+            // Check if current announcement is seeded; if so, continue
+            if (current_ann && current_ann->seed_asn.has_value()) {
+                continue;
+            }
+
+            std::shared_ptr<Announcement> og_ann = current_ann;
+
+            // For each announcement that was incoming
+            for (const auto& new_ann : ann_list) {
+                // Make sure there are no loops
+                if (valid_ann(new_ann, from_rel)) {
+                    auto new_ann_processed = copy_and_process(new_ann, from_rel);
+
+                    current_ann = get_best_ann_by_gao_rexford(current_ann, new_ann_processed);
+                }
+            }
+
+            // This is a new best announcement. Process it and add it to the local RIB
+            if (og_ann != current_ann) {
+                // Save to local RIB
+                localRIB.add_ann(current_ann);
+            }
+        }
+
+        reset_q(reset_q);
+    }
 
 protected:
+
+    std::vector<std::function<std::shared_ptr<Announcement>(const std::shared_ptr<Announcement>&, const std::shared_ptr<Announcement>&)>> gao_rexford_functions;
+
     void receive_ann(const std::shared_ptr<Announcement>& ann) {
         receive_ann(ann, false);
     }
@@ -332,6 +374,60 @@ protected:
         if (reset_q) {
             // Reset the recvQueue by replacing it with a new instance
             recvQueue = RecvQueue();
+        }
+    }
+
+
+    /////////////////////////////////////////// gao rexford
+    virtual void initialize_gao_rexford_functions() {
+        gao_rexford_functions = {
+            std::bind(&BGPPolicy::get_best_ann_by_local_pref, this, std::placeholders::_1, std::placeholders::_2),
+            std::bind(&BGPPolicy::get_best_ann_by_as_path, this, std::placeholders::_1, std::placeholders::_2),
+            std::bind(&BGPPolicy::get_best_ann_by_lowest_neighbor_asn_tiebreaker, this, std::placeholders::_1, std::placeholders::_2)
+        };
+    }
+
+    std::shared_ptr<Announcement> get_best_ann_by_local_pref(const std::shared_ptr<Announcement>& current_ann, const std::shared_ptr<Announcement>& new_ann) {
+        if (!current_ann || !new_ann) {
+            throw std::runtime_error("Announcement is null in get_best_ann_by_local_pref.");
+        }
+
+        if (current_ann->recv_relationship > new_ann->recv_relationship) {
+            return current_ann;
+        } else if (current_ann->recv_relationship < new_ann->recv_relationship) {
+            return new_ann;
+        } else {
+            return nullptr;
+        }
+    }
+
+    std::shared_ptr<Announcement> get_best_ann_by_as_path(const std::shared_ptr<Announcement>& current_ann, const std::shared_ptr<Announcement>& new_ann) {
+        if (!current_ann || !new_ann) {
+            throw std::runtime_error("Announcement is null in get_best_ann_by_as_path.");
+        }
+
+        if (current_ann->as_path.size() < new_ann->as_path.size()) {
+            return current_ann;
+        } else if (current_ann->as_path.size() > new_ann->as_path.size()) {
+            return new_ann;
+        } else {
+            return nullptr;
+        }
+    }
+
+    std::shared_ptr<Announcement> get_best_ann_by_lowest_neighbor_asn_tiebreaker(const std::shared_ptr<Announcement>& current_ann, const std::shared_ptr<Announcement>& new_ann) {
+        // Determines if the new announcement is better than the current announcement by Gao-Rexford criteria for ties
+        if (!current_ann || current_ann->as_path.empty() || !new_ann || new_ann->as_path.empty()) {
+            throw std::runtime_error("Invalid announcement or empty AS path in get_best_ann_by_lowest_neighbor_asn_tiebreaker.");
+        }
+
+        int current_neighbor_asn = current_ann->as_path.size() > 1 ? current_ann->as_path[1] : current_ann->as_path[0];
+        int new_neighbor_asn = new_ann->as_path.size() > 1 ? new_ann->as_path[1] : new_ann->as_path[0];
+
+        if (current_neighbor_asn <= new_neighbor_asn) {
+            return current_ann;
+        } else {
+            return new_ann;
         }
     }
 };
