@@ -49,7 +49,12 @@ public:
     long long propagation_rank;
 
     AS(int asn) : asn(asn), policy(std::make_unique<Policy>()), input_clique(false), ixp(false), stub(false), multihomed(false), transit(false), customer_cone_size(0), propagation_rank(0) {
-        policy->as = std::weak_ptr<AS>(this->shared_from_this());
+        //Can't set this here. AS must already be accessed by shared ptr before calling else err
+        //policy->as = std::weak_ptr<AS>(this->shared_from_this());
+    }
+    // Method to initialize weak_ptr after object is managed by shared_ptr
+    void initialize() {
+        policy->as = shared_from_this();
     }
 };
 
@@ -117,6 +122,7 @@ ASGraph readASGraph(const std::string& filename) {
 
         int asn = std::stoi(tokens[0]);
         auto as = std::make_shared<AS>(asn);
+        as->initialize();
 
         parseASNList(asGraph.as_dict, tokens[1], as->peers);
         parseASNList(asGraph.as_dict, tokens[2], as->customers);
