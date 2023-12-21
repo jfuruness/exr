@@ -379,12 +379,30 @@ protected:
 
 
     /////////////////////////////////////////// gao rexford
+
     virtual void initialize_gao_rexford_functions() {
         gao_rexford_functions = {
             std::bind(&BGPPolicy::get_best_ann_by_local_pref, this, std::placeholders::_1, std::placeholders::_2),
             std::bind(&BGPPolicy::get_best_ann_by_as_path, this, std::placeholders::_1, std::placeholders::_2),
             std::bind(&BGPPolicy::get_best_ann_by_lowest_neighbor_asn_tiebreaker, this, std::placeholders::_1, std::placeholders::_2)
         };
+    }
+    std::shared_ptr<Announcement> get_best_ann_by_gao_rexford(const std::shared_ptr<Announcement>& current_ann, const std::shared_ptr<Announcement>& new_ann) {
+        if (!new_ann) {
+            throw std::runtime_error("New announcement can't be null.");
+        }
+
+        if (!current_ann) {
+            return new_ann;
+        } else {
+            for (auto& func : gao_rexford_functions) {
+                auto best_ann = func(current_ann, new_ann);
+                if (best_ann) {
+                    return best_ann;
+                }
+            }
+            throw std::runtime_error("No announcement was chosen.");
+        }
     }
 
     std::shared_ptr<Announcement> get_best_ann_by_local_pref(const std::shared_ptr<Announcement>& current_ann, const std::shared_ptr<Announcement>& new_ann) {
