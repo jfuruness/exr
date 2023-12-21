@@ -170,6 +170,8 @@ public:
     RecvQueue recvQueue;
 
     Policy() {}
+
+    void receive_ann(const std::shared_ptr<Announcement>& ann);
 };
 
 
@@ -327,7 +329,7 @@ public:
             }
         }
 
-        reset_q(reset_q);
+        reset_queue(reset_q);
     }
     void propagate_to_providers() {
         std::set<Relationships> send_rels = {Relationships::ORIGIN, Relationships::CUSTOMERS};
@@ -349,7 +351,7 @@ protected:
     std::vector<std::function<std::shared_ptr<Announcement>(const std::shared_ptr<Announcement>&, const std::shared_ptr<Announcement>&)>> gao_rexford_functions;
 
     void receive_ann(const std::shared_ptr<Announcement>& ann) {
-        receive_ann(ann, false);
+        recvQueue.add_ann(ann);
     }
     bool valid_ann(const std::shared_ptr<Announcement>& ann, Relationships recv_relationship) const {
         // BGP Loop Prevention Check
@@ -385,7 +387,7 @@ protected:
         );
     }
 
-    void reset_q(bool reset_q) {
+    void reset_queue(bool reset_q) {
         if (reset_q) {
             // Reset the recvQueue by replacing it with a new instance
             recvQueue = RecvQueue();
@@ -397,9 +399,9 @@ protected:
 
     virtual void initialize_gao_rexford_functions() {
         gao_rexford_functions = {
-            std::bind(&BGPPolicy::get_best_ann_by_local_pref, this, std::placeholders::_1, std::placeholders::_2),
-            std::bind(&BGPPolicy::get_best_ann_by_as_path, this, std::placeholders::_1, std::placeholders::_2),
-            std::bind(&BGPPolicy::get_best_ann_by_lowest_neighbor_asn_tiebreaker, this, std::placeholders::_1, std::placeholders::_2)
+            std::bind(&BGPSimplePolicy::get_best_ann_by_local_pref, this, std::placeholders::_1, std::placeholders::_2),
+            std::bind(&BGPSimplePolicy::get_best_ann_by_as_path, this, std::placeholders::_1, std::placeholders::_2),
+            std::bind(&BGPSimplePolicy::get_best_ann_by_lowest_neighbor_asn_tiebreaker, this, std::placeholders::_1, std::placeholders::_2)
         };
     }
     std::shared_ptr<Announcement> get_best_ann_by_gao_rexford(const std::shared_ptr<Announcement>& current_ann, const std::shared_ptr<Announcement>& new_ann) {
@@ -468,15 +470,21 @@ protected:
     void propagate(Relationships propagate_to, const std::set<Relationships>& send_rels) {
         std::vector<std::weak_ptr<AS>> neighbors;
 
+        auto as_shared = as.lock();
+        if (!as_shared) {
+            // Handle the case where the AS object is no longer valid
+            throw std::runtime_error("Weak ref from policy to as no longer exists");
+        }
+
         switch (propagate_to) {
             case Relationships::PROVIDERS:
-                neighbors = providers;
+                neighbors = as_shared->providers;
                 break;
             case Relationships::PEERS:
-                neighbors = peers;
+                neighbors = as_shared->peers;
                 break;
             case Relationships::CUSTOMERS:
-                neighbors = customers;
+                neighbors = as_shared->customers;
                 break;
             default:
                 throw std::runtime_error("Unsupported relationship type.");
