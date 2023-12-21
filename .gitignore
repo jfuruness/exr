@@ -1,4 +1,7 @@
 exr
+built_exr
+valgrind_out.txt
+valgrind-out.txt
 
 # Prerequisites
 *.d

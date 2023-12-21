@@ -5,101 +5,145 @@
 #include <map>
 #include <string>
 #include <functional>
+#include <chrono>
+#include <iomanip>
+#include <memory>
+#include <algorithm>
 
-class AS {
+// Disable threading since we don't use it
+// drastically improves weak pointer times...
+//https://stackoverflow.com/a/8966130
+//weak pointer is still slow according to this https://stackoverflow.com/a/35137265
+//althought hat doesn't show the BOOST_DISBALE_THREADS
+//I replicated the results, it's about 2x as slow
+//Still, for good design, since I'm terrible at C++, I'm keeping it
+//esp since it's probably negligable since this timing test
+//was with 100000000U times
+#define BOOST_DISABLE_THREADS
+
+
+
+class Policy; // Forward declaration
+
+class AS : public std::enable_shared_from_this<AS> {
 public:
     int asn;
-    std::vector<AS*> peers;
-    std::vector<AS*> customers;
-    std::vector<AS*> providers;
-    // Other attributes as needed
+    std::unique_ptr<Policy> policy;
+    std::vector<std::weak_ptr<AS>> peers;
+    std::vector<std::weak_ptr<AS>> customers;
+    std::vector<std::weak_ptr<AS>> providers;
+    bool input_clique;
+    bool ixp;
+    bool stub;
+    bool multihomed;
+    bool transit;
+    long long customer_cone_size;
+    long long propagation_rank;
 
-    AS(int asn) : asn(asn) {}
+    AS(int asn) : asn(asn), policy(std::make_unique<Policy>()), input_clique(false), ixp(false), stub(false), multihomed(false), transit(false), customer_cone_size(0), propagation_rank(0) {
+        policy->as = std::weak_ptr<AS>(this->shared_from_this());
+    }
 };
 
-void parseASRelationships(std::map<int, AS*>& asGraph, const std::string& line, const std::function<void(AS*, int)>& addRelation) {
-    std::istringstream relationStream(line.substr(1, line.size() - 2)); // Removing braces
-    std::string asnStr;
-    while (std::getline(relationStream, asnStr, ',')) {
-        int relatedAsn = std::stoi(asnStr);
-        if (asGraph.find(relatedAsn) != asGraph.end()) {
-            addRelation(asGraph[relatedAsn], std::stoi(asnStr));
+class Policy {
+public:
+    std::weak_ptr<AS> as;
+
+    Policy() {}
+};
+
+class ASGraph {
+public:
+    std::map<int, std::shared_ptr<AS>> as_dict;
+    std::vector<std::vector<std::shared_ptr<AS>>> propagation_ranks;
+
+    void calculatePropagationRanks() {
+        int max_rank = 0;
+        for (const auto& pair : as_dict) {
+            max_rank = std::max(max_rank, pair.second->propagation_rank);
+        }
+
+        propagation_ranks.resize(max_rank + 1);
+
+        for (const auto& pair : as_dict) {
+            propagation_ranks[pair.second->propagation_rank].push_back(pair.second);
+        }
+
+        for (auto& rank : propagation_ranks) {
+            std::sort(rank.begin(), rank.end(), [](const std::shared_ptr<AS>& a, const std::shared_ptr<AS>& b) {
+                return a->asn < b->asn;
+            });
+        }
+    }
+};
+
+void parseASNList(std::map<int, std::shared_ptr<AS>>& asGraph, const std::string& data, std::vector<std::weak_ptr<AS>>& list) {
+    std::istringstream iss(data.substr(1, data.size() - 2)); // Remove braces
+    std::string asn_str;
+    while (std::getline(iss, asn_str, ',')) {
+        int asn = std::stoi(asn_str);
+        if (asGraph.find(asn) != asGraph.end()) {
+            list.push_back(asGraph[asn]);
         }
     }
 }
 
-std::map<int, AS*> readASGraph(const std::string& filename) {
-    std::map<int, AS*> asGraph;
+ASGraph readASGraph(const std::string& filename) {
+    auto start = std::chrono::high_resolution_clock::now();
+    std::cout << "Creating AS Graph" << std::endl;
+    ASGraph asGraph;
     std::ifstream file(filename);
     std::string line;
 
-    // Skip the header line
     std::getline(file, line);
-
-    // First pass: create AS objects
-    while (std::getline(file, line)) {
-        std::istringstream iss(line);
-        std::string token;
-
-        // Parse ASN
-        std::getline(iss, token, '\t');
-        int asn = std::stoi(token);
-
-        AS* as = new AS(asn);
-        asGraph[asn] = as;
-
-        // Skip the rest of the line
-        std::getline(iss, token);
+    std::string expectedHeaderStart = "asn\tpeers\tcustomers\tproviders\tinput_clique\tixp\tcustomer_cone_size\tpropagation_rank\tstubs\tstub\tmultihomed\ttransit";
+    if (line.find(expectedHeaderStart) != 0) {
+        throw std::runtime_error("File header does not start with the expected format.");
     }
 
-    // Reset file read position to the beginning
-    file.clear();
-    file.seekg(0);
-    std::getline(file, line); // Skip the header again
-
-    // Second pass: populate relationships
     while (std::getline(file, line)) {
         std::istringstream iss(line);
+        std::vector<std::string> tokens;
         std::string token;
 
-        // Get ASN
-        std::getline(iss, token, '\t');
-        int asn = std::stoi(token);
-        AS* as = asGraph[asn];
+        while (std::getline(iss, token, '\t')) {
+            tokens.push_back(token);
+        }
 
-        // Parse and set peers
-        std::getline(iss, token, '\t');
-        parseASRelationships(asGraph, token, [&](AS* relatedAS, int relatedAsn) {
-            as->peers.push_back(relatedAS);
-        });
+        int asn = std::stoi(tokens[0]);
+        auto as = std::make_shared<AS>(asn);
 
-        // Parse and set customers
-        std::getline(iss, token, '\t');
-        parseASRelationships(asGraph, token, [&](AS* relatedAS, int relatedAsn) {
-            as->customers.push_back(relatedAS);
-        });
+        parseASNList(asGraph.as_dict, tokens[1], as->peers);
+        parseASNList(asGraph.as_dict, tokens[2], as->customers);
+        parseASNList(asGraph.as_dict, tokens[3], as->providers);
 
-        // Parse and set providers
-        std::getline(iss, token, '\t');
-        parseASRelationships(asGraph, token, [&](AS* relatedAS, int relatedAsn) {
-            as->providers.push_back(relatedAS);
-        });
+        as->input_clique = (tokens[4] == "True");
+        as->ixp = (tokens[5] == "True");
+        as->customer_cone_size = std::stoll(tokens[6]);
+        as->propagation_rank = std::stoll(tokens[7]);
+        as->stub = (tokens[9] == "True");
+        as->multihomed = (tokens[10] == "True");
+        as->transit = (tokens[11] == "True");
 
-        // Parse other fields similarly...
+        asGraph.as_dict[asn] = as;
     }
+    asGraph.calculatePropagationRanks();
 
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> elapsed = end - start;
+    std::cout << "Generated ASGraph in "
+              << std::fixed << std::setprecision(2) << elapsed.count() << " seconds." << std::endl;
     return asGraph;
 }
 
 int main() {
-    std::string filename = "path_to_your_tsv_file.tsv";
-    std::map<int, AS*> asGraph = readASGraph(filename);
-
-    // Use the asGraph as needed
-
-    // Remember to free the allocated memory
-    for (auto& pair : asGraph) {
-        delete pair.second;
+    std::string filename = "/home/anon/Desktop/caida.tsv";
+    try {
+        ASGraph asGraph = readASGraph(filename);
+        // Further processing with asGraph...
+    } catch (const std::runtime_error& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
     }
 
     return 0;
