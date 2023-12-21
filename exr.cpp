@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <optional>
 #include <stdexcept> // for std::runtime_error
+#include <set>
 
 
 // Disable threading since we don't use it
@@ -328,6 +329,20 @@ public:
 
         reset_q(reset_q);
     }
+    void propagate_to_providers() {
+        std::set<Relationships> send_rels = {Relationships::ORIGIN, Relationships::CUSTOMERS};
+        propagate(Relationships::PROVIDERS, send_rels);
+    }
+
+    void propagate_to_customers() {
+        std::set<Relationships> send_rels = {Relationships::ORIGIN, Relationships::CUSTOMERS, Relationships::PEERS, Relationships::PROVIDERS};
+        propagate(Relationships::CUSTOMERS, send_rels);
+    }
+
+    void propagate_to_peers() {
+        std::set<Relationships> send_rels = {Relationships::ORIGIN, Relationships::CUSTOMERS};
+        propagate(Relationships::PEERS, send_rels);
+    }
 
 protected:
 
@@ -447,6 +462,55 @@ protected:
         } else {
             return new_ann;
         }
+    }
+
+    ///////////////////////////////// propagate
+    void propagate(Relationships propagate_to, const std::set<Relationships>& send_rels) {
+        std::vector<std::weak_ptr<AS>> neighbors;
+
+        switch (propagate_to) {
+            case Relationships::PROVIDERS:
+                neighbors = providers;
+                break;
+            case Relationships::PEERS:
+                neighbors = peers;
+                break;
+            case Relationships::CUSTOMERS:
+                neighbors = customers;
+                break;
+            default:
+                throw std::runtime_error("Unsupported relationship type.");
+        }
+
+        for (const auto& neighbor_weak : neighbors) {
+            for (const auto& [prefix, ann] : localRIB.prefix_anns()) {
+                if (send_rels.find(ann->recv_relationship) != send_rels.end() && !prev_sent(neighbor_weak, ann)) {
+                    if (policy_propagate(neighbor_weak, ann, propagate_to, send_rels)) {
+                        continue;
+                    } else {
+                        process_outgoing_ann(neighbor_weak, ann, propagate_to, send_rels);
+                    }
+                }
+            }
+        }
+    }
+
+    bool policy_propagate(const std::weak_ptr<AS>& neighbor_weak, const std::shared_ptr<Announcement>& ann, Relationships propagate_to, const std::set<Relationships>& send_rels) {
+        // This method simply returns false and does not use the neighbor_weak reference
+        return false;
+    }
+
+    bool prev_sent(const std::weak_ptr<AS>& neighbor_weak, const std::shared_ptr<Announcement>& ann) {
+        // This method simply returns false and does not use the neighbor_weak reference
+        return false;
+    }
+
+    void process_outgoing_ann(const std::weak_ptr<AS>& neighbor_weak, const std::shared_ptr<Announcement>& ann, Relationships propagate_to, const std::set<Relationships>& send_rels) {
+        auto neighbor = neighbor_weak.lock();
+        if (!neighbor || !neighbor->policy) {
+            throw std::runtime_error("weak ref no longer exists");
+        }
+        neighbor->policy->receive_ann(ann);
     }
 };
 
