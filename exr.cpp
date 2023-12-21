@@ -23,7 +23,15 @@
 
 
 
-class Policy; // Forward declaration
+class AS; // Forward declaration
+
+class Policy {
+public:
+    std::weak_ptr<AS> as;
+
+    Policy() {}
+};
+
 
 class AS : public std::enable_shared_from_this<AS> {
 public:
@@ -45,12 +53,6 @@ public:
     }
 };
 
-class Policy {
-public:
-    std::weak_ptr<AS> as;
-
-    Policy() {}
-};
 
 class ASGraph {
 public:
@@ -58,7 +60,7 @@ public:
     std::vector<std::vector<std::shared_ptr<AS>>> propagation_ranks;
 
     void calculatePropagationRanks() {
-        int max_rank = 0;
+        long long max_rank = 0;
         for (const auto& pair : as_dict) {
             max_rank = std::max(max_rank, pair.second->propagation_rank);
         }
@@ -74,6 +76,9 @@ public:
                 return a->asn < b->asn;
             });
         }
+    }
+    ~ASGraph() {
+        // No need to manually delete shared_ptr objects; they will be automatically deleted when they go out of scope.
     }
 };
 
