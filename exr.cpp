@@ -96,20 +96,64 @@ public:
 
 
 class LocalRIB {
-public:
-    std::map<std::string, Announcement> _info;
+protected:
+    std::map<std::string, std::shared_ptr<Announcement>> _info;
 
+public:
     LocalRIB() {}
-    // Add methods as needed
+
+    std::shared_ptr<Announcement> get_ann(const std::string& prefix, const std::shared_ptr<Announcement>& default_ann = nullptr) const {
+        // Returns announcement or nullptr from the local rib by prefix
+        auto it = _info.find(prefix);
+        if (it != _info.end()) {
+            return it->second;
+        }
+        return default_ann;
+    }
+
+    void add_ann(const std::shared_ptr<Announcement>& ann) {
+        // Adds an announcement to local rib with prefix as key
+        _info[ann->prefix] = ann;
+    }
+
+    void remove_ann(const std::string& prefix) {
+        // Removes announcement from local rib based on prefix
+        _info.erase(prefix);
+    }
+
+    const std::map<std::string, std::shared_ptr<Announcement>>& prefix_anns() const {
+        // Returns all prefixes and announcements zipped
+        return _info;
+    }
 };
 
 
 class RecvQueue {
-public:
-    std::map<std::string, std::vector<Announcement>> _info;
+protected:
+    std::map<std::string, std::vector<std::shared_ptr<Announcement>>> _info;
 
+public:
     RecvQueue() {}
-    // Add methods as needed
+
+    void add_ann(const std::shared_ptr<Announcement>& ann) {
+        // Appends ann to the list of received announcements for that prefix
+        _info[ann->prefix].push_back(ann);
+    }
+
+    const std::map<std::string, std::vector<std::shared_ptr<Announcement>>>& prefix_anns() const {
+        // Returns all prefixes and announcement lists
+        return _info;
+    }
+
+    const std::vector<std::shared_ptr<Announcement>>& get_ann_list(const std::string& prefix) const {
+        // Returns received announcement list for a given prefix
+        static const std::vector<std::shared_ptr<Announcement>> empty; // To return in case of no match
+        auto it = _info.find(prefix);
+        if (it != _info.end()) {
+            return it->second;
+        }
+        return empty;
+    }
 };
 
 
@@ -124,6 +168,8 @@ public:
 
     Policy() {}
 };
+
+
 
 
 class AS : public std::enable_shared_from_this<AS> {
@@ -239,6 +285,56 @@ ASGraph readASGraph(const std::string& filename) {
               << std::fixed << std::setprecision(2) << elapsed.count() << " seconds." << std::endl;
     return asGraph;
 }
+
+class BGPSimplePolicy : public Policy {
+public:
+    BGPSimplePolicy() : Policy() {}
+
+protected:
+    void receive_ann(const std::shared_ptr<Announcement>& ann) {
+        receive_ann(ann, false);
+    }
+    bool valid_ann(const std::shared_ptr<Announcement>& ann, Relationships recv_relationship) const {
+        // BGP Loop Prevention Check
+        if (auto as_ptr = as.lock()) { // Safely obtain a shared_ptr from weak_ptr
+            return std::find(ann->as_path.begin(), ann->as_path.end(), as_ptr->asn) == ann->as_path.end();
+        }else{
+            throw std::runtime_error("AS pointer is not valid.");
+        }
+    }
+    std::shared_ptr<Announcement> copy_and_process(const std::shared_ptr<Announcement>& ann, Relationships recv_relationship) {
+        // Check for a valid 'AS' pointer
+        auto as_ptr = as.lock();
+        if (!as_ptr) {
+            throw std::runtime_error("AS pointer is not valid.");
+        }
+
+        // Creating a new announcement with modified attributes
+        std::vector<int> new_as_path = {as_ptr->asn};
+        new_as_path.insert(new_as_path.end(), ann->as_path.begin(), ann->as_path.end());
+
+        // Return a new Announcement object with the modified AS path and recv_relationship
+        return std::make_shared<Announcement>(
+            ann->prefix,
+            new_as_path,
+            ann->timestamp,
+            ann->seed_asn,
+            ann->roa_valid_length,
+            ann->roa_origin,
+            recv_relationship,
+            ann->withdraw,
+            ann->traceback_end,
+            ann->communities
+        );
+    }
+
+    void reset_q(bool reset_q) {
+        if (reset_q) {
+            // Reset the recvQueue by replacing it with a new instance
+            recvQueue = RecvQueue();
+        }
+    }
+};
 
 int main() {
     std::string filename = "/home/anon/Desktop/caida.tsv";
