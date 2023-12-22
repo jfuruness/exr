@@ -173,6 +173,10 @@ public:
     Policy() {}
 
     void receive_ann(const std::shared_ptr<Announcement>& ann);
+    void process_incoming_anns(Relationships from_rel, int propagation_round, bool reset_q = true);
+    void propagate_to_providers();
+    void propagate_to_customers();
+    void propagate_to_peers();
 };
 
 
@@ -266,7 +270,8 @@ ASGraph readASGraph(const std::string& filename) {
         }
 
         int asn = std::stoi(tokens[0]);
-        auto as = std::make_unique<AS>(asn);
+        // Shared between as_dict and propagation_ranks
+        auto as = std::make_shared<AS>(asn);
         as->initialize();
 
         parseASNList(asGraph.as_dict, tokens[1], as->peers);
@@ -524,7 +529,7 @@ protected:
 };
 
 // Factory function type for creating Policy objects
-using PolicyFactoryFunc = std::function<std::shared_ptr<Policy>(const std::shared_ptr<AS>&)>;
+using PolicyFactoryFunc = std::function<std::unique_ptr<Policy>(const std::shared_ptr<AS>&)>;
 
 class CPPSimulationEngine {
 public:
@@ -565,28 +570,27 @@ protected:
     std::map<std::string, PolicyFactoryFunc> name_to_policy_func_dict;
     // Method to register policy factory functions
     void register_policy_factory(const std::string& name, const PolicyFactoryFunc& factory) {
-        name_to_policy_dict[name] = factory;
+        name_to_policy_func_dict[name] = factory;
     }
     // Method to register all policies
     void register_policies() {
         // Example of registering a base policy
-        register_policy_factory("BGPSimplePolicy", [](const std::shared_ptr<AS>& as_obj) {
+        register_policy_factory("BGPSimplePolicy", [](const std::shared_ptr<AS>& as_obj) -> std::unique_ptr<Policy>{
             return std::make_unique<BGPSimplePolicy>(as_obj);
         });
         // Register other policies similarly
         // e.g., register_policy_factory("SpecificPolicy", ...);
     }
     void set_as_classes(const std::string& base_policy_class_str, const std::map<int, std::string>& non_default_asn_cls_str_dict) {
-        for (auto& as_pair : as_graph.as_dict) {
-            auto& as_obj = as_pair.second;
+        for (auto& [asn, as_obj] : as_graph.as_dict) {
 
             // Determine the policy class string to use
             auto cls_str_it = non_default_asn_cls_str_dict.find(as_obj->asn);
             std::string policy_class_str = (cls_str_it != non_default_asn_cls_str_dict.end()) ? cls_str_it->second : base_policy_class_str;
 
             // Find the factory function in the dictionary
-            auto factory_it = name_to_policy_dict.find(policy_class_str);
-            if (factory_it == name_to_policy_dict.end()) {
+            auto factory_it = name_to_policy_func_dict.find(policy_class_str);
+            if (factory_it == name_to_policy_func_dict.end()) {
                 throw std::runtime_error("Policy class not implemented: " + policy_class_str);
             }
 
@@ -626,38 +630,22 @@ protected:
             auto& rank = as_graph.propagation_ranks[i];
 
             if (i > 0) {
-                for (auto& as_obj_weak : rank) {
-                    auto as_obj = as_obj_weak.lock();
-                    if (!as_obj) {
-                        throw std::runtime_error("AS object not found or no longer valid in propagate_to_providers.");
-                    }
+                for (auto& as_obj : rank) {
                     as_obj->policy->process_incoming_anns(Relationships::CUSTOMERS, propagation_round);
                 }
             }
 
-            for (auto& as_obj_weak : rank) {
-                auto as_obj = as_obj_weak.lock();
-                if (!as_obj) {
-                    throw std::runtime_error("AS object not found or no longer valid in propagate_to_providers.");
-                }
+            for (auto& as_obj : rank) {
                 as_obj->policy->propagate_to_providers();
             }
         }
     }
     void propagate_to_peers(int propagation_round) {
-        for (auto& [asn, as_obj_weak] : as_graph.as_dict) {
-            auto as_obj = as_obj_weak.lock();
-            if (!as_obj) {
-                throw std::runtime_error("AS object not found or no longer valid in propagate_to_peers.");
-            }
+        for (auto& [asn, as_obj] : as_graph.as_dict) {
             as_obj->policy->propagate_to_peers();
         }
 
-        for (auto& [asn, as_obj_weak] : as_graph.as_dict) {
-            auto as_obj = as_obj_weak.lock();
-            if (!as_obj) {
-                throw std::runtime_error("AS object not found or no longer valid in propagate_to_peers.");
-            }
+        for (auto& [asn, as_obj] : as_graph.as_dict) {
             as_obj->policy->process_incoming_anns(Relationships::PEERS, propagation_round);
         }
     }
@@ -670,20 +658,12 @@ protected:
             auto& rank = *it;
             // There are no incoming anns in the top row
             if (i > 0) {
-                for (auto& as_obj_weak : rank) {
-                    auto as_obj = as_obj_weak.lock();
-                    if (!as_obj) {
-                        throw std::runtime_error("AS object not found or no longer valid in propagate_to_customers.");
-                    }
+                for (auto& as_obj : rank) {
                     as_obj->policy->process_incoming_anns(Relationships::PROVIDERS, propagation_round);
                 }
             }
 
-            for (auto& as_obj_weak : rank) {
-                auto as_obj = as_obj_weak.lock();
-                if (!as_obj) {
-                    throw std::runtime_error("AS object not found or no longer valid in propagate_to_customers.");
-                }
+            for (auto& as_obj : rank) {
                 as_obj->policy->propagate_to_customers();
             }
         }
