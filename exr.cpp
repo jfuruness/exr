@@ -586,6 +586,8 @@ public:
     }
 
     void run(int propagation_round = 0) {
+
+        auto start = std::chrono::high_resolution_clock::now();
         // Ensure that the simulator is ready to run this round
         if (ready_to_run_round != propagation_round) {
             throw std::runtime_error("Engine not set up to run for round " + std::to_string(propagation_round));
@@ -596,6 +598,11 @@ public:
 
         // Increment the ready to run round
         ready_to_run_round++;
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> elapsed = end - start;
+        std::cout << "Propagated in "
+                  << std::fixed << std::setprecision(2) << elapsed.count() << " seconds." << std::endl;
+
     }
 
     std::vector<std::shared_ptr<Announcement>> get_announcements_from_tsv(const std::string& path) {
