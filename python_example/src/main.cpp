@@ -244,11 +244,13 @@ public:
     long long propagation_rank;
 
     AS(int asn) : asn(asn), policy(std::make_shared<BGPSimplePolicy>()), input_clique(false), ixp(false), stub(false), multihomed(false), transit(false), customer_cone_size(0), propagation_rank(0) {
+    //AS(int asn) : asn(asn), policy(nullptr), input_clique(false), ixp(false), stub(false), multihomed(false), transit(false), customer_cone_size(0), propagation_rank(0) {
         //Can't set this here. AS must already be accessed by shared ptr before calling else err
         //policy->as = std::weak_ptr<AS>(this->shared_from_this());
     }
     // Method to initialize weak_ptr after object is managed by shared_ptr
     void initialize() {
+        if (!policy){return;}
         policy->as = std::weak_ptr<AS>(shared_from_this());
     }
 };
@@ -594,7 +596,7 @@ public:
                const std::string& base_policy_class_str = "BGPSimplePolicy",
                const std::map<int, std::string>& non_default_asn_cls_str_dict = {}) {
         std::cout<<"in here"<<std::endl;
-        set_as_classes(base_policy_class_str, non_default_asn_cls_str_dict);
+        //set_as_classes(base_policy_class_str, non_default_asn_cls_str_dict);
 
         std::cout<<"here"<<std::endl;
         seed_announcements(announcements);
@@ -782,21 +784,31 @@ protected:
         }
     }
     void seed_announcements(const std::vector<std::shared_ptr<Announcement>>& announcements) {
+
         auto start = std::chrono::high_resolution_clock::now();
         for (const auto& ann : announcements) {
+
             if (!ann || !ann->seed_asn.has_value()) {
+
+                std::cout<<"here4"<<std::endl;
                 throw std::runtime_error("Announcement seed ASN is not set.");
             }
 
+            std::cout<<"here3"<<std::endl;
             auto as_it = as_graph.as_dict.find(ann->seed_asn.value());
             if (as_it == as_graph.as_dict.end()) {
+
+                std::cout<<"here5"<<std::endl;
                 throw std::runtime_error("AS object not found in ASGraph.");
             }
+            std::cout<<"here2"<<std::endl;
 
             auto& obj_to_seed = as_it->second;
+
             if (obj_to_seed->policy->localRIB.get_ann(ann->prefix)) {
                 throw std::runtime_error("Seeding conflict: Announcement already exists in the local RIB.");
             }
+
 
             obj_to_seed->policy->localRIB.add_ann(ann);
         }
