@@ -627,6 +627,7 @@ public:
             if (std::getline(iss, token, '\t') && !token.empty()) {
                 int rel_value = std::stoi(token);
                 switch (rel_value) {
+                    case 0: recv_relationship = Relationships::ORIGIN; break;
                     case 1: recv_relationship = Relationships::PROVIDERS; break;
                     case 2: recv_relationship = Relationships::PEERS; break;
                     case 3: recv_relationship = Relationships::CUSTOMERS; break;
@@ -777,9 +778,17 @@ protected:
 
 int main() {
     std::string filename = "/home/anon/Desktop/caida.tsv";
+    std::string announcementsFilename = "/home/anon/Desktop/anns_1000_mod.tsv";
     try {
         ASGraph asGraph = readASGraph(filename);
         CPPSimulationEngine engine = CPPSimulationEngine(asGraph);
+        // Get announcements from TSV file
+        std::vector<std::shared_ptr<Announcement>> announcements = engine.get_announcements_from_tsv(announcementsFilename);
+
+        // Setup the engine with the loaded announcements
+        // Assuming setup function takes announcements and other necessary parameters
+        engine.setup(announcements);  // Add additional parameters as required
+
         // Further processing with asGraph...
     } catch (const std::runtime_error& e) {
         std::cerr << "Error: " << e.what() << std::endl;
