@@ -529,7 +529,7 @@ protected:
 };
 
 // Factory function type for creating Policy objects
-using PolicyFactoryFunc = std::function<std::unique_ptr<Policy>(const std::shared_ptr<AS>&)>;
+using PolicyFactoryFunc = std::function<std::unique_ptr<Policy>()>;
 
 class CPPSimulationEngine {
 public:
@@ -575,8 +575,8 @@ protected:
     // Method to register all policies
     void register_policies() {
         // Example of registering a base policy
-        register_policy_factory("BGPSimplePolicy", [](const std::shared_ptr<AS>& as_obj) -> std::unique_ptr<Policy>{
-            return std::make_unique<BGPSimplePolicy>(as_obj);
+        register_policy_factory("BGPSimplePolicy", []() -> std::unique_ptr<Policy>{
+            return std::make_unique<BGPSimplePolicy>();
         });
         // Register other policies similarly
         // e.g., register_policy_factory("SpecificPolicy", ...);
@@ -595,7 +595,9 @@ protected:
             }
 
             // Create and set the new policy object
-            as_obj->policy = factory_it->second(as_obj);
+            as_obj->policy = factory_it->second();
+            //set the reference to the AS
+            as_obj->policy->as = std::weak_ptr<AS>(as_obj->shared_from_this());
         }
     }
     void seed_announcements(const std::vector<std::shared_ptr<Announcement>>& announcements) {
