@@ -177,6 +177,10 @@ public:
     void propagate_to_providers();
     void propagate_to_customers();
     void propagate_to_peers();
+
+    // You need virtual destructors in base class or else derived classes
+    // won't clean up properly
+    virtual ~Policy() = default; // Virtual and uses the default implementation
 };
 
 
@@ -203,7 +207,7 @@ public:
     }
     // Method to initialize weak_ptr after object is managed by shared_ptr
     void initialize() {
-        policy->as = shared_from_this();
+        policy->as = std::weak_ptr<AS>(shared_from_this());
     }
 };
 
@@ -302,6 +306,9 @@ public:
     BGPSimplePolicy() : Policy() {
         initialize_gao_rexford_functions();
     }
+    // You need virtual destructors in base class or else derived classes
+    // won't clean up properly
+    virtual ~BGPSimplePolicy() override = default; // Virtual and uses the default implementation
 
     void process_incoming_anns(Relationships from_rel, int propagation_round, bool reset_q = true) {
         // Process all announcements that were incoming from a specific relationship
@@ -788,6 +795,7 @@ int main() {
         // Setup the engine with the loaded announcements
         // Assuming setup function takes announcements and other necessary parameters
         engine.setup(announcements);  // Add additional parameters as required
+        std::cout << "done" << std::endl;
 
         // Further processing with asGraph...
     } catch (const std::runtime_error& e) {
