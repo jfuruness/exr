@@ -1,6 +1,8 @@
 import python_example
 python_example.main()
-#ann = python_example.Announcement("123", [1], 1, 1, False, 1, python_example.Relationships.ORIGIN\
-#, False, False, [])
-#engine = python_example.get_engine()
-#engine.setup([ann])
+print("completed main")
+engine = python_example.get_engine()
+# engine.set_as_classes()
+ann = python_example.Announcement("1.2.", [1], 1, 1, None, None, python_example.Relationships.ORIGIN, False, True, [])
+engine.setup([ann])
+engine.run(0);

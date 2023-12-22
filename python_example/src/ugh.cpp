@@ -231,7 +231,7 @@ protected:
 class AS : public std::enable_shared_from_this<AS> {
 public:
     int asn;
-    std::unique_ptr<Policy> policy;
+    std::shared_ptr<Policy> policy;
     std::vector<std::weak_ptr<AS>> peers;
     std::vector<std::weak_ptr<AS>> customers;
     std::vector<std::weak_ptr<AS>> providers;
@@ -243,12 +243,14 @@ public:
     long long customer_cone_size;
     long long propagation_rank;
 
-    AS(int asn) : asn(asn), policy(std::make_unique<BGPSimplePolicy>()), input_clique(false), ixp(false), stub(false), multihomed(false), transit(false), customer_cone_size(0), propagation_rank(0) {
+    AS(int asn) : asn(asn), policy(std::make_shared<BGPSimplePolicy>()), input_clique(false), ixp(false), stub(false), multihomed(false), transit(false), customer_cone_size(0), propagation_rank(0) {
+    //AS(int asn) : asn(asn), policy(nullptr), input_clique(false), ixp(false), stub(false), multihomed(false), transit(false), customer_cone_size(0), propagation_rank(0) {
         //Can't set this here. AS must already be accessed by shared ptr before calling else err
         //policy->as = std::weak_ptr<AS>(this->shared_from_this());
     }
     // Method to initialize weak_ptr after object is managed by shared_ptr
     void initialize() {
+        if (!policy){return;}
         policy->as = std::weak_ptr<AS>(shared_from_this());
     }
 };
@@ -318,6 +320,9 @@ ASGraph readASGraph(const std::string& filename) {
         int asn = std::stoi(tokens[0]);
         // Shared between as_dict and propagation_ranks
         auto as = std::make_shared<AS>(asn);
+        as->initialize();
+        as->initialize();
+        as->initialize();
         as->initialize();
 
         parseASNList(asGraph.as_dict, tokens[1], as->peers);
@@ -576,28 +581,18 @@ void BGPSimplePolicy::process_outgoing_ann(const std::weak_ptr<AS>& neighbor_wea
 
 
 // Factory function type for creating Policy objects
-using PolicyFactoryFunc = std::function<std::unique_ptr<Policy>()>;
+using PolicyFactoryFunc = std::function<std::shared_ptr<Policy>()>;
 
 class CPPSimulationEngine {
 public:
-    std::unique_ptr<ASGraph> as_graph;
+    ASGraph& as_graph;
     int ready_to_run_round;
 
 
-    // Constructor now accepts a unique_ptr to ASGraph
-    CPPSimulationEngine(std::unique_ptr<ASGraph> as_graph, int ready_to_run_round = -1)
-        : as_graph(std::move(as_graph)), ready_to_run_round(ready_to_run_round) {
-
+    CPPSimulationEngine(ASGraph& as_graph, int ready_to_run_round = -1)
+        : as_graph(as_graph), ready_to_run_round(ready_to_run_round) {
         register_policies();  // Register policy types upon construction
     }
-
-    // Disable copy semantics
-    CPPSimulationEngine(const CPPSimulationEngine&) = delete;
-    CPPSimulationEngine& operator=(const CPPSimulationEngine&) = delete;
-
-    // Enable move semantics
-    CPPSimulationEngine(CPPSimulationEngine&&) = default;
-    CPPSimulationEngine& operator=(CPPSimulationEngine&&) = default;
 
 
     void setup(const std::vector<std::shared_ptr<Announcement>>& announcements,
@@ -736,28 +731,9 @@ public:
 
         return announcements;
     }
-
-protected:
-
-    ///////////////////////setup funcs
-    std::map<std::string, PolicyFactoryFunc> name_to_policy_func_dict;
-    // Method to register policy factory functions
-    void register_policy_factory(const std::string& name, const PolicyFactoryFunc& factory) {
-        name_to_policy_func_dict[name] = factory;
-    }
-    // Method to register all policies
-    void register_policies() {
-        // Example of registering a base policy
-        register_policy_factory("BGPSimplePolicy", []() -> std::unique_ptr<Policy>{
-            std::cout <<"in register_policy"<<std::endl;
-            return std::make_unique<BGPSimplePolicy>();
-        });
-        // Register other policies similarly
-        // e.g., register_policy_factory("SpecificPolicy", ...);
-    }
     void set_as_classes(const std::string& base_policy_class_str, const std::map<int, std::string>& non_default_asn_cls_str_dict) {
         std::cout << "in set_as_classes" << std::endl;
-        for (auto& [asn, as_obj] : as_graph->as_dict) {
+        for (auto& [asn, as_obj] : as_graph.as_dict) {
 
                 std::cout << "in set_as_classes loop" << std::endl;
             // Determine the policy class string to use
@@ -791,22 +767,51 @@ protected:
             std::cout << "f" << std::endl;
         }
     }
+
+protected:
+
+    ///////////////////////setup funcs
+    std::map<std::string, PolicyFactoryFunc> name_to_policy_func_dict;
+    // Method to register policy factory functions
+    void register_policy_factory(const std::string& name, const PolicyFactoryFunc& factory) {
+        name_to_policy_func_dict[name] = factory;
+    }
+    // Method to register all policies
+    void register_policies() {
+        // Example of registering a base policy
+        register_policy_factory("BGPSimplePolicy", []() -> std::shared_ptr<Policy>{
+            std::cout <<"in register_policy"<<std::endl;
+            return std::make_shared<BGPSimplePolicy>();
+        });
+        // Register other policies similarly
+        // e.g., register_policy_factory("SpecificPolicy", ...);
+    }
     void seed_announcements(const std::vector<std::shared_ptr<Announcement>>& announcements) {
+
         auto start = std::chrono::high_resolution_clock::now();
         for (const auto& ann : announcements) {
+
             if (!ann || !ann->seed_asn.has_value()) {
+
+                std::cout<<"here4"<<std::endl;
                 throw std::runtime_error("Announcement seed ASN is not set.");
             }
 
-            auto as_it = as_graph->as_dict.find(ann->seed_asn.value());
-            if (as_it == as_graph->as_dict.end()) {
+            std::cout<<"here3"<<std::endl;
+            auto as_it = as_graph.as_dict.find(ann->seed_asn.value());
+            if (as_it == as_graph.as_dict.end()) {
+
+                std::cout<<"here5"<<std::endl;
                 throw std::runtime_error("AS object not found in ASGraph.");
             }
+            std::cout<<"here2"<<std::endl;
 
             auto& obj_to_seed = as_it->second;
+
             if (obj_to_seed->policy->localRIB.get_ann(ann->prefix)) {
                 throw std::runtime_error("Seeding conflict: Announcement already exists in the local RIB.");
             }
+
 
             obj_to_seed->policy->localRIB.add_ann(ann);
         }
@@ -825,8 +830,8 @@ protected:
         propagate_to_customers(propagation_round);
     }
     void propagate_to_providers(int propagation_round) {
-        for (size_t i = 0; i < as_graph->propagation_ranks.size(); ++i) {
-            auto& rank = as_graph->propagation_ranks[i];
+        for (size_t i = 0; i < as_graph.propagation_ranks.size(); ++i) {
+            auto& rank = as_graph.propagation_ranks[i];
 
             if (i > 0) {
                 for (auto& as_obj : rank) {
@@ -840,17 +845,17 @@ protected:
         }
     }
     void propagate_to_peers(int propagation_round) {
-        for (auto& [asn, as_obj] : as_graph->as_dict) {
+        for (auto& [asn, as_obj] : as_graph.as_dict) {
             as_obj->policy->propagate_to_peers();
         }
 
-        for (auto& [asn, as_obj] : as_graph->as_dict) {
+        for (auto& [asn, as_obj] : as_graph.as_dict) {
             as_obj->policy->process_incoming_anns(Relationships::PEERS, propagation_round);
         }
     }
 
     void propagate_to_customers(int propagation_round) {
-        auto& ranks = as_graph->propagation_ranks;
+        auto& ranks = as_graph.propagation_ranks;
         size_t i = 0; // Initialize i to 0
 
         for (auto it = ranks.rbegin(); it != ranks.rend(); ++it, ++i) {
@@ -870,17 +875,17 @@ protected:
 };
 
 CPPSimulationEngine get_engine(std::string filename = "/home/anon/Desktop/caida.tsv") {
-    auto asGraph = std::make_unique<ASGraph>(readASGraph(filename));
-    return CPPSimulationEngine(std::move(asGraph));
+    ASGraph asGraph = readASGraph(filename);
+    CPPSimulationEngine engine = CPPSimulationEngine(asGraph);
+    return engine;
 }
 
 int main() {
     std::string filename = "/home/anon/Desktop/caida.tsv";
     std::string announcementsFilename = "/home/anon/Desktop/anns_1000_mod.tsv";
     try {
-        //ASGraph asGraph = readASGraph(filename);
-        //CPPSimulationEngine engine = CPPSimulationEngine(asGraph);
-        auto engine = get_engine(filename);
+        ASGraph asGraph = readASGraph(filename);
+        CPPSimulationEngine engine = CPPSimulationEngine(asGraph);
         // Get announcements from TSV file
         std::vector<std::shared_ptr<Announcement>> announcements = engine.get_announcements_from_tsv(announcementsFilename);
 
@@ -919,6 +924,10 @@ PYBIND11_MODULE(python_example, m) {
         //     py::arg("announcements"),
         //     py::arg("base_policy_class_str") = "BGPSimplePolicy",
         //     py::arg("non_default_asn_cls_str_dict") = std::map<int, std::string>{})
+        .def("set_as_classes", &CPPSimulationEngine::set_as_classes,
+             py::arg("base_policy_class_str") = "BGPSimplePolicy",
+             py::arg("non_default_asn_cls_str_dict") = std::map<int, std::string>{})
+
         //.def("setup", [](CPPSimulationEngine& engine, const std::vector<py::object>& py_announcements, const std::string& base_policy_class_str, const std::map<int, std::string>& non_default_asn_cls_str_dict) {
         //    std::vector<std::shared_ptr<Announcement>> announcements;
         //    for (auto& py_ann : py_announcements) {
@@ -926,7 +935,6 @@ PYBIND11_MODULE(python_example, m) {
         //    }
         //    engine.setup(announcements, base_policy_class_str, non_default_asn_cls_str_dict);
         //}, py::arg("announcements"), py::arg("base_policy_class_str") = "BGPSimplePolicy", py::arg("non_default_asn_cls_str_dict") = std::map<int, std::string>{})
-
         .def("setup", [](CPPSimulationEngine& engine, const std::vector<std::shared_ptr<Announcement>>& announcements, const std::string& base_policy_class_str, const std::map<int, std::string>& non_default_asn_cls_str_dict) {
             // Debug: Print the number of announcements
             std::cout << "Setting up engine with " << announcements.size() << " announcements." << std::endl;
@@ -940,9 +948,9 @@ PYBIND11_MODULE(python_example, m) {
 
             // Call the actual setup method
             engine.setup(announcements, base_policy_class_str, non_default_asn_cls_str_dict);
-        }, py::arg("announcements"), py::arg("base_policy_class_str") = "BGPSimplePolicy", py::arg("non_default_asn_cls_str_dict") = std::map<int, std::string>{})
-        .def("run", &CPPSimulationEngine::run,
-             py::arg("propagation_round") = 0);
+        }, py::arg("announcements"), py::arg("base_policy_class_str") = "BGPSimplePolicy", py::arg("non_default_asn_cls_str_dict") = std::map<int, std::string>{});
+
+
 
     py::class_<Announcement, std::shared_ptr<Announcement>>(m, "Announcement")
         .def(py::init<const std::string&, const std::vector<int>&, int,
