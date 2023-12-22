@@ -712,6 +712,7 @@ protected:
         }
     }
     void seed_announcements(const std::vector<std::shared_ptr<Announcement>>& announcements) {
+        auto start = std::chrono::high_resolution_clock::now();
         for (const auto& ann : announcements) {
             if (!ann || !ann->seed_asn.has_value()) {
                 throw std::runtime_error("Announcement seed ASN is not set.");
@@ -729,6 +730,11 @@ protected:
 
             obj_to_seed->policy->localRIB.add_ann(ann);
         }
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> elapsed = end - start;
+        std::cout << "Seeded " << announcements.size() << " announcements in "
+                  << std::fixed << std::setprecision(2) << elapsed.count() << " seconds." << std::endl;
+
     }
 
     ///////////////////propagation funcs
